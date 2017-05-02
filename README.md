@@ -6,7 +6,7 @@ Borrowed largely from the [Amsys first boot scripts](https://github.com/amsysuk/
 You need to have the [CocoaDialog app](http://mstratman.github.io/cocoadialog/) parked in your DS scripts folder. I'm using version 3.0.0. Beta 7.
 
 **Doesn't DeployStudio already do this?**
-Yes, DS can setup users and host names and such based on data saved in it's database of serial numbers. I'd live to use this but my coworkers aren't really organized enough to manage the list and our fleet and inventory concerns aren't big enough to warrant me spending the time to do it for them. Asking for this info at image time generally gets everything we need done.
+Yes, DS can setup users and host names and such based on data saved in it's database of serial numbers. I'd love to use this but my coworkers aren't really organized enough to manage the list and our fleet and inventory concerns aren't big enough to warrant me spending the time to do it for them. Asking for this info at image time generally gets everything we need done.
 
 The component scripts work as follows:
 #### AskForInfo.sh
