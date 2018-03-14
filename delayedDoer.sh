@@ -8,7 +8,7 @@
 #
 # Requires 10.10 or higher.
 #
-# Mod'd by Ben Mason 04/2017
+# Mod'd for Grandstand 01/2018
 
 ###############
 ## variables ##
@@ -21,8 +21,7 @@ LANG="en"                                     # macOS language
 REGION="en_US"                                # macOS region
 SUBMIT_TO_APPLE=NO                            # Choose whether to submit diagnostic information to Apple
 SUBMIT_TO_APP_DEVELOPERS=NO                   # Choose whether to submit diagnostic information to 3rd party developers
-STD_USER_PASSWORD="password"      		      # The default password for the standard user
-LOCAL_ADMIN_SHORTNAME="localadmin"			  # short name for a local admin account
+STD_USER_PASSWORD="CHANGEME"          	      # The default password for the standard user
 
 #### These variables can be left alone
 PLBUDDY=/usr/libexec/PlistBuddy
@@ -152,17 +151,35 @@ systemsetup -setremotelogin on
 
 ### Grandstand added items
 
+# Try to mute the computer
+osascript -e "set Volume 0"
+
+## SET Asset ID if needed
+if [ -n "$ASSETID" ] && [ "$ASSETID" != "DONOTHING" ]; then
+	#asset value is not blank and isn't the DONOTHING value, set the stored value to nvram
+	nvram ASSET="$ASSETID"
+fi
+
 ## Set WM Group
 /usr/bin/defaults write /Library/MonitoringClient/ClientSettings ClientGroup -string "$WMGROUP"
 
 ## Set the initial munki manifest
 # figure out which manifest to use
 case "$WMGROUP" in
-	"Art" ) 
+	"Art" )
 		manifest="setup-art"
 		;;
 	"test" )
 		manifest="test"
+		;;
+	"Servers" )
+		manifest="setup-server"
+		;;
+	"Production" )
+		manifest="setup-production"
+		;;
+	"RemoteVM" )
+		manifest="remoteVM"
 		;;
 	* )
 		manifest="setup"
@@ -175,27 +192,48 @@ esac
 /usr/bin/defaults write /Library/Preferences/ManagedInstalls.plist HelpURL "http://helpdesk.grandstand.private/portal"
 /usr/bin/defaults write /Library/Preferences/ManagedInstalls.plist InstallAppleSoftwareUpdates -bool True
 /usr/bin/defaults write /Library/Preferences/ManagedInstalls.plist UnattendedAppleUpdates -bool True
-/usr/bin/defaults write /Library/Preferences/ManagedInstalls.plist SuppressUserNotification -bool True
-/usr/bin/defaults write /Library/Preferences/ManagedInstalls.plist SuppressStopButtonOnInstall -bool True
+/usr/bin/defaults write /Library/Preferences/ManagedInstalls.plist SuppressUserNotification -bool False
+/usr/bin/defaults write /Library/Preferences/ManagedInstalls.plist SuppressStopButtonOnInstall -bool False
 touch /Users/Shared/.com.googlecode.munki.checkandinstallatstartup
+
+## Create the local admin just so we do have an admin account at outset. Will be over written by the current localadmin pkg when munki runs.
+sysadminctl -addUser localadmin -fullName "Local Admin" -password "gl@ssofb33r" -admin
+dscl . -create /Users/localadmin NFSHomeDirectory /Users/localadmin	# Create new home dir attribute
 
 ## Create the standard user
 # If we got a NONE value, skip the user setup section entirely 
-if [ "$USER_LONGNAME" != "NONE" ]; then
-	sysadminctl -addUser $USER_SHORTNAME -fullName "$USER_LONGNAME" -password "$STD_USER_PASSWORD" 
+if [ "$USER_LONGNAME" == "tester" ]; then
+	sysadminctl -addUser $USER_SHORTNAME -fullName "$USER_LONGNAME" -password "password" -admin
 	dscl . -create /Users/$USER_SHORTNAME NFSHomeDirectory /Users/$USER_SHORTNAME	# Create new home dir attribute
 
 	## Set computer name. hostname and localhostname
-	scutil --set ComputerName "$USER_LONGNAME"
+	scutil --set ComputerName "Test Machine"
+	scutil --set HostName "test".local
+	scutil --set LocalHostName "test" 
+elif [ "$USER_LONGNAME" != "NONE" ]; then
+	sysadminctl -addUser $USER_SHORTNAME -fullName "$USER_LONGNAME" -password "$STD_USER_PASSWORD" 
+	dscl . -create /Users/$USER_SHORTNAME NFSHomeDirectory /Users/$USER_SHORTNAME	# Create new home dir attribute
+	#set password to force change on login
+	pwpolicy -a localadmin -p 'gl@ssofb33r' -u $USER_SHORTNAME -setpolicy "newPasswordRequired=1"
+	
+	#check if this is a Remote VM and if so, append "Remote" to the end of the sharing name
+	if [ "$manifest" == "remoteVM" ]; then
+		sharingName="$USER_LONGNAME Remote"
+	else
+		sharingName="$USER_LONGNAME"
+	fi
+	
+	## Set computer name. hostname and localhostname
+	scutil --set ComputerName "$sharingName"
 	scutil --set HostName "$HOSTNAME".local
 	scutil --set LocalHostName "$HOSTNAME" 
-fi
-
-## SET Asset ID if needed
-if [ -n "$ASSETID" ] && [ "$ASSETID" != "DONOTHING" ]; then
-	#asset value is not blank and isn't the DONOTHING value, set the stored value to nvram
-	nvram ASSET="$ASSETID"
-fi
-
+elif [ "$USER_LONGNAME" == "NONE" ] && [ "$WMGROUP" == "Spares" ];then
+	#don't setup a user but put the asset ID in the hostname so it's easy to identify in WM
+	setThisAID=$(nvram -p | grep ASSET | awk -F ' ' '{print $2}')
+	scutil --set ComputerName "Asset ID $setThisAID"
+else
+	#there was no std user to set
+	echo "No standard user specified to set."	
+fi		
 
 exit 0

@@ -2,9 +2,14 @@
 
 ### This script gathers info we'll need later in the setup process.
 
+# First, attempt to mute the computer
+osascript -e "set Volume 0"
+
 # Globals vars
 POPUP=`dirname "$0"`/cocoaDialog.app/Contents/MacOS/cocoaDialog  # Path to the cocoaDialog tool
 ITEMS=("Accounting" "Art" "HR" "IT" "Logistics" "Marketing" "Operations" "Production" "Sales" "Servers" "Spares" "Other")   # list for departments, must match what's in watchman
+sshKey=`dirname "$0"`/deploystudio
+
 
 ## Functions
 askForAID () {
@@ -49,7 +54,7 @@ askForDept () {
 	local ICONSIZE="128"
 
 	#Do the dialog, get the result and strip the Okay button code
-	local RESPONSE=$("$POPUP" $RUNMODE $OTHEROPTS --icon $ICON --icon-size $ICONSIZE --title "${TITLE}" --text "${TEXT}" --items "${ITEMS[@]}" --timeout 30)
+	local RESPONSE=$("$POPUP" $RUNMODE $OTHEROPTS --icon $ICON --icon-size $ICONSIZE --title "${TITLE}" --text "${TEXT}" --items "${ITEMS[@]}")
 	local RESPONSE=`echo $RESPONSE | sed 's/Okay //g'`
 
 	# Assign the variable to reflect the choice
@@ -90,6 +95,9 @@ askForDept () {
 	   "Testing") 
 			wm_group="test"
 			;;
+		"Servers")
+			wm_group="Servers"
+			;;
 		"timeout")
 			wm_group="NEW"
 			;;
@@ -107,16 +115,16 @@ askForUserName () {
 	# Options for cocoaDialog
 	local RUNMODE="standard-inputbox"
 	local TITLE="Enter User's Long Name"
-	local TEXT="Long Name"
+	local TEXT="No Username"
 	local INFOTEXT="Enter the users name as they want it to appear."
 	local ICON="person"
 	local ICONSIZE="128"
 
 	#Do the dialog, get the result and strip the Okay button code
-	local RESPONSE=$("$POPUP" "$RUNMODE" --no-cancel --float --string-output --icon $ICON --icon-size $ICONSIZE --title "${TITLE}" --text "${TEXT}" ‑‑informative‑text "${INFOTEXT}" --timeout 30)
+	local RESPONSE=$("$POPUP" "$RUNMODE" --no-cancel --float --string-output --icon $ICON --icon-size $ICONSIZE --title "${TITLE}" --text "${TEXT}" ‑‑informative‑text "${INFOTEXT}")
 	local RESPONSE=`echo $RESPONSE | sed 's/Okay //g'`
 	
-	if [ "$RESPONSE" == "timeout" ] || [ "$RESPONSE" == "Okay" ] || [ "$RESPONSE" == "Long Name" ] || [ -z "$RESPONSE" ]; then
+	if [ "$RESPONSE" == "timeout" ] || [ "$RESPONSE" == "Okay" ] || [ "$RESPONSE" == "No Username" ] || [ -z "$RESPONSE" ]; then
 		#either no username was specified in time or was blank, pass information ot variable
 		echo "RuntimeSetCustomProperty: USER_LONGNAME=NONE"
 	else
@@ -125,47 +133,28 @@ askForUserName () {
 	fi
 }
 
-doChecks () {
-	## Asset ID check
-	checkAID=$(nvram -p | grep ASSET | awk -F ' ' '{print $2}')
-	if [ -z "$checkAID" ]; then
-		#no AID on this hardware, ask to set it
-		askForAID
-	else	
-		#we've got one already, pass a dummy variable
-		echo "RuntimeSetCustomProperty: SET_AID=DONOTHING"
-	fi
-
-	## Ask for Department
-	askForDept
-
-	## Ask for User info
-	askForUserName
-	
-	exit 0
-}
-
 askAboutVM () {
 	local RUNMODE="yesno-msgbox"
 	local TITLE="VM Check"
-	local TEXT="Do you want to use the canned test values?"
-	local INFOTEXT="Do you want to use the canned test values?"
+	local TEXT="Is this a remote VM?"
+	local INFOTEXT="Is this a remote VM?"
 	local ICON="hazard"
 	local ICONSIZE="50"
 
-	local RESPONSE=$("$POPUP" "$RUNMODE" --no-cancel --float --string-output --icon $ICON --icon-size $ICONSIZE --title "${TITLE}" --text "${TEXT}" --timeout 12)
+	local RESPONSE=$("$POPUP" "$RUNMODE" --no-cancel --float --string-output --icon $ICON --icon-size $ICONSIZE --title "${TITLE}" --text "${TEXT}")
 	
 	case "$RESPONSE" in
 		"Yes"|"timeout" )
 			#Fill in canned values and exit clean
 			echo "RuntimeSetCustomProperty: SET_AID=DONOTHING"
-			echo "RuntimeSetCustomProperty: USER_LONGNAME=user"
-			echo "RuntimeSetCustomProperty: WM_GROUP=test"
+			#echo "RuntimeSetCustomProperty: USER_LONGNAME=tester"
+			echo "RuntimeSetCustomProperty: WM_GROUP=RemoteVM"
+			askForUserName
 			exit 0
 			;;
 		"No" )
 			#Proceed as normal
-			doChecks
+			return 0
 			;;
 		* )
 			echo "ERROR, unexpected output from VM check!"
@@ -174,16 +163,44 @@ askAboutVM () {
 	esac
 }
 
-### Do stuff!!!
+serverAccounts () {
+	chmod 600 "$sshKey"
+	ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -i "$sshKey" admin@littlemac.grandstand.private "/usr/local/grandstand/create_OD_user.x '$USER_LONGNAME' '$WM_GROUP'"
+	ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -i "$sshKey" admin@bigmac.grandstand.private "/usr/local/grandstand/create_OD_user.x '$USER_LONGNAME' '$WM_GROUP'"
+}
 
-## Check if this is a VM and if so, ask if we should proceed normally or shortcut ot the test workflow
+### Main loop
+# Check if we're a VM and if so, ask if we can used canned values
 checkModel=$(sysctl hw.model | grep 'VMware')
 if [ -n "$checkModel" ]; then
 	#it is a VM, ask about it
 	askAboutVM
-else
-	# Not a VM or use the normal routine
-	doChecks
 fi
+
+# Ask about the department
+askForDept
+
+# If we need to get a username, get it, else continue. Don't need username if it's a server (we set one for "admin") and if we're a spare, no user is made.
+case "$wm_group" in
+	"Servers")
+		echo "RuntimeSetCustomProperty: USER_LONGNAME=NONE"
+		;;
+	"Spares")
+		echo "RuntimeSetCustomProperty: USER_LONGNAME=NONE"
+		;;
+	*)  #anything else
+		askForUserName
+		# Setup some server accounts
+		# serverAccounts
+		;;
+esac
+
+# Asset ID check
+checkAID=$(nvram -p | grep ASSET | awk -F ' ' '{print $2}')
+if [ -z "$checkAID" ]; then
+	#no AID on this hardware, ask to set it
+	askForAID
+fi
+
 
 exit 0
